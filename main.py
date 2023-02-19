@@ -1,4 +1,6 @@
 # System / Python
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1'
 import os
 import scipy.io as io
 import argparse
@@ -25,14 +27,12 @@ from mri_tools import rA, rAtA, ifft2,fft2  #
 # from utils import psnr_slice, ssim_slice,pseudo2real,compute_psnr,compute_ssim,compute_psnr_q
 from utils import pseudo2real,compute_ssim,compute_psnr_q,save_images,get_mask
 from dataprocess import complex2pseudo,pseudo2complex,imsshow,image2kspace,kspace2image
-os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1'
+
 from loss import cal_loss
 import matplotlib.pyplot as plt
 
-parser = argparse.ArgumentParser()
-
 #add
+parser = argparse.ArgumentParser()
 parser.add_argument('--strain','-strain', type=str, default=None, help='file_name_train')
 parser.add_argument('--stest','-stest', type=str, default=None, help='file_name_test')
 parser.add_argument('--overlap','-overlap', type=int, default=8, help='file_name_test')
@@ -140,7 +140,7 @@ class EarlyStopping:
 
 
 def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
-    # print()
+
     assert mode in ['train', 'val', 'test']
     loss, psnr, ssim = 0.0, 0.0, 0.0
     t = tqdm(dataloader, desc=mode + 'ing', total=int(len(dataloader))) if rank == 0 else dataloader
@@ -155,13 +155,7 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
         mask_down=mask_down.permute(0,3,1,2)
   
         option=True
-        #loupe train  test的区别
-        # if mode == 'train':
-        #     option=True
-        # else:
-        #     option=False
-        
-        #model初始化中传入最全的变量 在实际定义的时候根据method的内容定义不同的model
+
         method=args.method
         gt_kspace = complex2pseudo(image2kspace(pseudo2complex(label)))
         print('method:',method)
