@@ -229,9 +229,7 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
     up_ssim_log = sssim_up 
     down_ssim_log = sssim_down 
     log.append(loss)
-    print('up_ssim_log:',up_ssim_log)
-    print('down_ssim_log:',down_ssim_log)
-    print('loss:',loss)
+
     if mode == 'train':
         curr_lr = optimizer.param_groups[0]['lr']
         log.append(curr_lr)
@@ -257,10 +255,12 @@ def solvers(rank, ngpus_per_node, args):
     model = Network(method=args.method, rank=rank)
     # whether load checkpoint
     if args.pretrained or args.mode == 'test':
-        # path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
-        path_of_model= args.model_save_path #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if(len(args.model_save_path.split('/'))>3):  #使用默认路径 3是根据前缀路径的长度确定
+            path_of_model= args.model_save_path
+        else:  #使用传入的参数路径
+            path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
+        
         model_path = os.path.join(path_of_model, 'best_checkpoint.pth.tar')
-
         assert os.path.isfile(model_path)
         checkpoint = torch.load(model_path, map_location='cuda:{}'.format(rank))
         start_epoch = checkpoint['epoch']
