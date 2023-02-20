@@ -107,7 +107,7 @@ def plot_loss(loss):
     plt.close('all')
 
 
-def imgshow(im, cmap=None, rgb_axis=None, dpi=100, figsize=(6.4, 4.8)):
+def imgshow(im, cmap=None, rgb_axis=None, dpi=1000, figsize=(6.4, 4.8)):
     if isinstance(im, torch.Tensor):
         im = im.to('cpu').detach().cpu().numpy()
     if rgb_axis is not None:

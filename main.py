@@ -1,5 +1,3 @@
-# System / Python
-os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0, 1'
 import os
 import scipy.io as io
@@ -30,7 +28,8 @@ from dataprocess import complex2pseudo,pseudo2complex,imsshow,image2kspace,kspac
 
 from loss import cal_loss
 import matplotlib.pyplot as plt
-
+# System / Python
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 #add
 parser = argparse.ArgumentParser()
 parser.add_argument('--strain','-strain', type=str, default=None, help='file_name_train')
@@ -63,17 +62,19 @@ parser.add_argument('--test-path', type=str, default='/home/liuchun/Desktop/0_ex
 parser.add_argument('--u-mask-path','-ump', type=str, default='vd', help='undersampling mask')
 parser.add_argument('--s-mask-up-path', '-smup',type=str, default='/home/liuchun/Desktop/ovlm_parallel_02/mask/selecting_mask/mask_2.00x_acs16.mat', help='selection mask in up network')
 parser.add_argument('--s-mask-down-path','-smdp', type=str, default='/home/liuchun/Desktop/ovlm_parallel_02/mask/selecting_mask/mask_2.50x_acs16.mat', help='selection mask in down network')
-parser.add_argument('--method','-method', type=str, default='loupe', help='choose baseline or loupe')
+parser.add_argument('--method','-method', type=str, default='baseline', help='choose baseline or loupe')
 # parser.add_argument('--train-sample-rate', '-trsr', type=float, default=0.06, help='sampling rate of training data')
 # parser.add_argument('--val-sample-rate', '-vsr', type=float, default=0.02, help='sampling rate of validation data')
 # parser.add_argument('--test-sample-rate', '-tesr', type=float, default=0.02, help='sampling rate of test data')
 # save path
 # parser.add_argument('--model-save-path', '-mpath', type=str, default='./checkpoints/', help='save path of trained model')
-parser.add_argument('--model-save-path', '-mpath', type=str, default='model_paramters', help='save path of trained model')
+#/home/liuchun/Desktop/0_experiment/model_save/
+# parser.add_argument('--model-save-path', '-mpath', type=str, default='model_paramters', help='save path of trained model')
+parser.add_argument('--model-save-path', '-mpath', type=str, default='/home/liuchun/Desktop/0_experiment/model_save/m00', help='save path of trained model')
 parser.add_argument('--loss-curve-path', '-lpath', type=str, default='loss_log', help='save path of loss curve in tensorboard')
 # others
 parser.add_argument('--mode', '-m', type=str, default='train', help='whether training or test model, value should be set to train or test')
-parser.add_argument('--pretrained', '-pt', type=bool, default=False, help='whether load checkpoint')
+parser.add_argument('--pretrained', '-pt', type=bool, default=True, help='whether load checkpoint')
 # parser.add_argument('--pretrained', '-pt', type=bool, default=False, help='whether load checkpoint')
 
 
@@ -139,7 +140,7 @@ class EarlyStopping:
             self.counter = 0
 
 
-def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
+def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
 
     assert mode in ['train', 'val', 'test']
     loss, psnr, ssim = 0.0, 0.0, 0.0
@@ -149,32 +150,28 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
         mask_under = data_batch[1].to(rank, non_blocking=True)
         mask_up = data_batch[2].to(rank, non_blocking=True)
         mask_down = data_batch[3].to(rank, non_blocking=True)
-
         mask_under=mask_under.permute(0,3,1,2)
         mask_up=mask_up.permute(0,3,1,2)
         mask_down=mask_down.permute(0,3,1,2)
-  
         option=True
-
         method=args.method
         gt_kspace = complex2pseudo(image2kspace(pseudo2complex(label)))
         print('method:',method)
+
         if(method=="baseline"):
             mask_net_up=mask_up
             mask_net_down=mask_down
+            if mode=='test':
+                mask_net_up=mask_net_down=mask_under
             net_img_up = rAtA(label, mask_net_up)
             net_img_down = rAtA(label, mask_net_down)
-            output_up,  output_down = model(net_img_up.contiguous(), mask_net_up, net_img_down.contiguous(), mask_net_down)
+            output_up,  output_down = model(net_img_up.contiguous(), mask_net_up, net_img_down.contiguous(), mask_net_down,mode)
 
         if(method=="loupe"):
-            output_up,  output_down,mask_net_up,mask_net_down  = model(mask_under.contiguous(), label.contiguous(),args.overlap,option)
+            output_up,  output_down,mask_net_up,mask_net_down  = model(mask_under.contiguous(), label.contiguous(),args.overlap,option,mode)
             net_img_up=complex2pseudo(kspace2image(pseudo2complex(gt_kspace*mask_net_up)))
             net_img_down=complex2pseudo(kspace2image(pseudo2complex(gt_kspace*mask_net_down)))
-            #存储mask
-            mask_look_path='/home/liuchun/Desktop/0_experiment/mask/look_mask'
-            io.savemat(f'{mask_look_path}/up_mask/{iter_num}.mat', {'mask_net_up':mask_net_up.detach().cpu().numpy()})
-            io.savemat(f'{mask_look_path}/down_mask/{iter_num}.mat', {'mask_net_down':mask_net_down.detach().cpu().numpy()})
-
+       
         out_mean=(output_up+output_down)/2.0
         under_img = rAtA(label, mask_under)
         under_kspace = rA(label, mask_under)
@@ -194,7 +191,11 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
         output_up, output_down = output_up .contiguous(), output_down .contiguous()
         output_up_kspace = fft2(output_up)
         output_down_kspace = fft2(output_down)
+        label_kspace=fft2(label)
         #计算损失
+        sssim_up=compute_ssim(pseudo2real(label),pseudo2real(output_up))
+        sssim_down=compute_ssim(pseudo2real(label),pseudo2real(output_down))
+ 
         diff_otherf = (output_up_kspace - output_down_kspace) * (1 - mask_under)
         recon_loss_up = criterion(output_up_kspace * mask_under, under_kspace)
         recon_loss_down = criterion(output_down_kspace * mask_under, under_kspace)
@@ -207,7 +208,7 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
             batch_loss.backward()
             optimizer.step()
             a=pseudo2real(label)
-            b=pseudo2real(output_up)
+            b=pseudo2real(out_mean) #参照parcel都对均值进行约束
             psnr += compute_psnr_q(a, b)            
             ssim += compute_ssim(a, b)
             for name, param in model.named_parameters():
@@ -220,9 +221,17 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
             psnr += compute_psnr_q(a, b)            
             ssim += compute_ssim(a, b)
         loss += batch_loss.item()
+        sssim_up+=sssim_up
+        sssim_down+=sssim_down
     loss /= len(dataloader)
-
+    sssim_up/=len(dataloader)
+    sssim_down/=len(dataloader)
+    up_ssim_log = sssim_up 
+    down_ssim_log = sssim_down 
     log.append(loss)
+    print('up_ssim_log:',up_ssim_log)
+    print('down_ssim_log:',down_ssim_log)
+    print('loss:',loss)
     if mode == 'train':
         curr_lr = optimizer.param_groups[0]['lr']
         log.append(curr_lr)
@@ -231,7 +240,7 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args):
         ssim /= len(dataloader)
         log.append(psnr)
         log.append(ssim)
-    return log
+    return log,up_ssim_log,down_ssim_log
 
 
 def solvers(rank, ngpus_per_node, args):
@@ -248,9 +257,10 @@ def solvers(rank, ngpus_per_node, args):
     model = Network(method=args.method, rank=rank)
     # whether load checkpoint
     if args.pretrained or args.mode == 'test':
-        path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
-        model_path = os.path.join(args.path_of_model, 'best_checkpoint.pth.tar')
-        print('path_of_model:',path_of_model) #保存的是最好结果
+        # path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
+        path_of_model= args.model_save_path #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        model_path = os.path.join(path_of_model, 'best_checkpoint.pth.tar')
+
         assert os.path.isfile(model_path)
         checkpoint = torch.load(model_path, map_location='cuda:{}'.format(rank))
         start_epoch = checkpoint['epoch']
@@ -295,14 +305,14 @@ def solvers(rank, ngpus_per_node, args):
     train_loader =build_loader(dataset_train,args.batch_size,is_shuffle=True)
     val_loader =build_loader(dataset_val,args.batch_size,is_shuffle=False)
     test_loader =build_loader(dataset_test,args.batch_size,is_shuffle=False)
-   
+    
     # test step
     if args.mode == 'test':
         model.eval()
         with torch.no_grad():
             test_log = []
             start_time = time.time()
-            test_log = forward('test', rank, model, test_loader, criterion, optimizer, test_log, args)
+            test_log,_,_ = forward('test', rank, model, test_loader, criterion, optimizer, test_log, args )
             test_time = time.time() - start_time
         # test information
         test_loss = test_log[0]
@@ -311,7 +321,6 @@ def solvers(rank, ngpus_per_node, args):
         if rank == 0:
             logger.info('time:{:.5f}s\ttest_loss:{:.7f}\ttest_psnr:{:.5f}\ttest_ssim:{:.5f}'.format(test_time, test_loss, test_psnr, test_ssim))
         return
-
 
     if rank == 0:
         path_loss='/home/liuchun/Desktop/0_experiment/loss_save/'
@@ -322,10 +331,10 @@ def solvers(rank, ngpus_per_node, args):
         train_log = [epoch]
         epoch_start_time = time.time()
         model.train()
-        train_log = forward('train', rank, model, train_loader, criterion, optimizer, train_log, args)
+        train_log,ssim_up_look,ssim_down_look = forward('train', rank, model, train_loader, criterion, optimizer, train_log, args )
         model.eval()
         with torch.no_grad():
-            train_log = forward('val', rank, model, val_loader, criterion, optimizer, train_log, args)
+            train_log,ssim_up_look,ssim_down_look = forward('val', rank, model, val_loader, criterion, optimizer, train_log, args )
         epoch_time = time.time() - epoch_start_time
         # train information
         epoch = train_log[0]
@@ -341,6 +350,7 @@ def solvers(rank, ngpus_per_node, args):
             logger.info('epoch:{:<8d}time:{:.5f}s\tlr:{:.8f}\ttrain_loss:{:.7f}\tval_loss:{:.7f}\tval_psnr:{:.5f}\t'
                         'val_ssim:{:.5f}'.format(epoch, epoch_time, lr, train_loss, val_loss, val_psnr, val_ssim))
             writer.add_scalars('loss', {'train_loss': train_loss, 'val_loss': val_loss}, epoch)
+            writer.add_scalars('lossupdown', {'loss_up': ssim_up_look, 'loss_down': ssim_down_look}, epoch)
             # save checkpoint
             checkpoint = {
                 'epoch': epoch,
@@ -382,7 +392,6 @@ def main():
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     torch.multiprocessing.spawn(solvers, nprocs=args.gpus, args=(args.gpus, args))
-
 
 if __name__ == '__main__':
     main()
