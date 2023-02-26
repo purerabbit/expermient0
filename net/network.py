@@ -11,7 +11,7 @@ class ParallelNetwork(nn.Module):
         self.up_network = CascadeMRIReconstructionFramework(
             n_cascade=5  #the formor is 5
         )
-        self.down_network=self.net = CascadeMRIReconstructionFramework(
+        self.down_network = CascadeMRIReconstructionFramework(
             n_cascade=5  #the formor is 5
         )
         if(self.method=="loupe"):
@@ -29,8 +29,10 @@ class ParallelNetwork(nn.Module):
             else:
                 loss_mask=dc_mask=mask  
             #形成统一的mask
-            if mode=='test':
+            # if mode=='test':
+            if mode != 'train':
                 loss_mask=dc_mask=mask
+
             k0_up=fft2(gt)*dc_mask
             under_img_up=ifft2(k0_up)
             k0_down=fft2(gt)*loss_mask

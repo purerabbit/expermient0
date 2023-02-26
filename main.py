@@ -35,6 +35,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--strain','-strain', type=str, default=None, help='file_name_train')
 parser.add_argument('--stest','-stest', type=str, default=None, help='file_name_test')
 parser.add_argument('--overlap','-overlap', type=int, default=8, help='file_name_test')
+parser.add_argument('--loss_ratio','-loss_ratio', type=float, default=0.1, help='file_name_test')
 
 parser.add_argument('--exp-name', type=str, default='self-supervised MRI reconstruction', help='name of experiment')
 # parameters related to distributed training
@@ -74,7 +75,7 @@ parser.add_argument('--model-save-path', '-mpath', type=str, default='/home/liuc
 parser.add_argument('--loss-curve-path', '-lpath', type=str, default='loss_log', help='save path of loss curve in tensorboard')
 # others
 parser.add_argument('--mode', '-m', type=str, default='train', help='whether training or test model, value should be set to train or test')
-parser.add_argument('--pretrained', '-pt', type=bool, default=True, help='whether load checkpoint')
+parser.add_argument('--pretrained', '-pt', type=bool, default=False, help='whether load checkpoint')
 # parser.add_argument('--pretrained', '-pt', type=bool, default=False, help='whether load checkpoint')
 
 
@@ -161,7 +162,8 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
         if(method=="baseline"):
             mask_net_up=mask_up
             mask_net_down=mask_down
-            if mode=='test':
+            # if mode=='test':
+            if mode !='train':
                 mask_net_up=mask_net_down=mask_under
             net_img_up = rAtA(label, mask_net_up)
             net_img_down = rAtA(label, mask_net_down)
@@ -172,7 +174,7 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
             net_img_up=complex2pseudo(kspace2image(pseudo2complex(gt_kspace*mask_net_up)))
             net_img_down=complex2pseudo(kspace2image(pseudo2complex(gt_kspace*mask_net_down)))
        
-        out_mean=(output_up+output_down)/2.0
+        out_mean=(output_up + output_down)/2.0
         under_img = rAtA(label, mask_under)
         under_kspace = rA(label, mask_under)
 
@@ -200,8 +202,8 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
         recon_loss_up = criterion(output_up_kspace * mask_under, under_kspace)
         recon_loss_down = criterion(output_down_kspace * mask_under, under_kspace)
         diff_loss = criterion(diff_otherf, torch.zeros_like(diff_otherf))
-        lammda= nn.Parameter(torch.tensor(0.01,dtype=torch.float32))
-        batch_loss = recon_loss_up + recon_loss_down + lammda * diff_loss   #+ 0.01 * constr_loss_up + 0.01 * constr_loss_down
+        print('args.loss_ratio:',args.loss_ratio)
+        batch_loss = recon_loss_up + recon_loss_down + args.loss_ratio * diff_loss   #+ 0.01 * constr_loss_up + 0.01 * constr_loss_down
 
         if mode == 'train':
             optimizer.zero_grad()
@@ -215,11 +217,12 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
                 if param.grad is None:
                     print(name)
                     print(param.device)
-        else:
-            a=pseudo2real(label)
-            b=pseudo2real(out_mean)
-            psnr += compute_psnr_q(a, b)            
-            ssim += compute_ssim(a, b)
+        # else:
+        a=pseudo2real(label)
+        b=pseudo2real(out_mean)
+        psnr += compute_psnr_q(a, b)            
+        ssim += compute_ssim(a, b)
+
         loss += batch_loss.item()
         sssim_up+=sssim_up
         sssim_down+=sssim_down
@@ -233,11 +236,11 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
     if mode == 'train':
         curr_lr = optimizer.param_groups[0]['lr']
         log.append(curr_lr)
-    else:
-        psnr /= len(dataloader)
-        ssim /= len(dataloader)
-        log.append(psnr)
-        log.append(ssim)
+    # else:
+    psnr /= len(dataloader)
+    ssim /= len(dataloader)
+    log.append(psnr)
+    log.append(ssim)
     return log,up_ssim_log,down_ssim_log
 
 
@@ -261,6 +264,7 @@ def solvers(rank, ngpus_per_node, args):
             path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
         
         model_path = os.path.join(path_of_model, 'best_checkpoint.pth.tar')
+        print('model_path:',model_path)
         assert os.path.isfile(model_path)
         checkpoint = torch.load(model_path, map_location='cuda:{}'.format(rank))
         start_epoch = checkpoint['epoch']
@@ -271,7 +275,7 @@ def solvers(rank, ngpus_per_node, args):
         if rank == 0:
             logger.info('Load checkpoint at epoch {}.'.format(start_epoch))
             logger.info('Current learning rate is {}.'.format(lr))
-            logger.info('Current best ssim in train phase is {}.'.format(best_ssim))
+            logger.info('Current best ssim in train(val) phase is {}.'.format(best_ssim))
             logger.info('The model is loaded.')
     elif args.use_init_weights:
         init_weights(model, init_type=args.init_type, gain=args.gain)
@@ -328,6 +332,7 @@ def solvers(rank, ngpus_per_node, args):
         writer = SummaryWriter(path_loss)
     for epoch in range(start_epoch + 1, args.num_epochs + 1):
         # train_sampler.set_epoch(epoch)
+        print('now epoch:',epoch)
         train_log = [epoch]
         epoch_start_time = time.time()
         model.train()
@@ -340,15 +345,19 @@ def solvers(rank, ngpus_per_node, args):
         epoch = train_log[0]
         train_loss = train_log[1]
         lr = train_log[2]
-        val_loss = train_log[3]
-        val_psnr = train_log[4]
-        val_ssim = train_log[5]
+
+        train_psnr = train_log[3]
+        train_ssim = train_log[4]
+
+        val_loss = train_log[5]
+        val_psnr = train_log[6]
+        val_ssim = train_log[7]
 
         is_best = val_ssim > best_ssim
         best_ssim = max(val_ssim, best_ssim)
         if rank == 0:
-            logger.info('epoch:{:<8d}time:{:.5f}s\tlr:{:.8f}\ttrain_loss:{:.7f}\tval_loss:{:.7f}\tval_psnr:{:.5f}\t'
-                        'val_ssim:{:.5f}'.format(epoch, epoch_time, lr, train_loss, val_loss, val_psnr, val_ssim))
+            logger.info('epoch:{:<8d}time:{:.5f}s\tlr:{:.8f}\ttrain_loss:{:.7f}\ttrain_psnr:{:.7f}\ttrain_ssim:{:.7f}\tval_loss:{:.7f}\tval_psnr:{:.5f}\t'
+                        'val_ssim:{:.5f}'.format(epoch, epoch_time, lr, train_loss , train_psnr , train_ssim, val_loss, val_psnr, val_ssim))
             writer.add_scalars('loss', {'train_loss': train_loss, 'val_loss': val_loss}, epoch)
             writer.add_scalars('lossupdown', {'loss_up': ssim_up_look, 'loss_down': ssim_down_look}, epoch)
             # save checkpoint
@@ -359,23 +368,30 @@ def solvers(rank, ngpus_per_node, args):
                 # 'model': model.module.state_dict()
                 'model': model.state_dict()
             }
-            path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
+
+            if(len(args.model_save_path.split('/'))>3):  #使用默认路径 3是根据前缀路径的长度确定
+                path_of_model= args.model_save_path
+            else:  #使用传入的参数路径
+                path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
+            # path_of_model='/home/liuchun/Desktop/0_experiment/model_save/'+args.model_save_path
             if not os.path.exists(path_of_model):
                 os.makedirs(path_of_model)
             model_path = os.path.join(path_of_model, 'checkpoint.pth.tar')
             best_model_path = os.path.join(path_of_model, 'best_checkpoint.pth.tar')
             torch.save(checkpoint, model_path)
-            if is_best:
+            if is_best: #根据val的结果保存最好的模型参数
                 shutil.copy(model_path, best_model_path)
         # scheduler
         if epoch <= args.warmup_epochs and not args.pretrained:
             scheduler_wu.step()
         scheduler_re.step(val_ssim)
-        early_stopping(val_ssim, loss=False)
-        if early_stopping.early_stop:
-            if rank == 0:
-                logger.info('The experiment is early stop!')
-            break
+        # early_stopping(val_ssim, loss=False)
+
+        #指定训练500轮
+        # if early_stopping.early_stop:   
+        #     if rank == 0:
+        #         logger.info('The experiment is early stop!')
+        #     break
     if rank == 0:
         writer.close()
     return
