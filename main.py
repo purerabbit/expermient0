@@ -144,7 +144,7 @@ class EarlyStopping:
 def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
 
     assert mode in ['train', 'val', 'test']
-    loss, psnr, ssim = 0.0, 0.0, 0.0
+    loss,loss_diff,loss_up,loss_down ,psnr, ssim = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     t = tqdm(dataloader, desc=mode + 'ing', total=int(len(dataloader))) if rank == 0 else dataloader
     for iter_num, data_batch in enumerate(t):
         label = data_batch[0].to(rank, non_blocking=True)
@@ -224,14 +224,25 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
         ssim += compute_ssim(a, b)
 
         loss += batch_loss.item()
+        loss_diff+=diff_loss
+        loss_up+=recon_loss_up
+        loss_down+=recon_loss_down
         sssim_up+=sssim_up
         sssim_down+=sssim_down
     loss /= len(dataloader)
+    loss_diff/= len(dataloader)
+    loss_up/=len(dataloader)
+    loss_down/=len(dataloader)
+
     sssim_up/=len(dataloader)
     sssim_down/=len(dataloader)
     up_ssim_log = sssim_up 
     down_ssim_log = sssim_down 
     log.append(loss)
+    log.append(loss_diff)
+    log.append(loss_up)
+    log.append(loss_down)
+
 
     if mode == 'train':
         curr_lr = optimizer.param_groups[0]['lr']
@@ -320,8 +331,8 @@ def solvers(rank, ngpus_per_node, args):
             test_time = time.time() - start_time
         # test information
         test_loss = test_log[0]
-        test_psnr = test_log[1]
-        test_ssim = test_log[2]
+        test_psnr = test_log[4]
+        test_ssim = test_log[5]
         if rank == 0:
             logger.info('time:{:.5f}s\ttest_loss:{:.7f}\ttest_psnr:{:.5f}\ttest_ssim:{:.5f}'.format(test_time, test_loss, test_psnr, test_ssim))
         return
@@ -344,14 +355,18 @@ def solvers(rank, ngpus_per_node, args):
         # train information
         epoch = train_log[0]
         train_loss = train_log[1]
-        lr = train_log[2]
-
-        train_psnr = train_log[3]
-        train_ssim = train_log[4]
-
-        val_loss = train_log[5]
-        val_psnr = train_log[6]
-        val_ssim = train_log[7]
+        train_loss_diff=train_log[2]
+        train_loss_up=train_log[3] 
+        train_loss_down=train_log[4]
+        lr = train_log[5]
+        train_psnr = train_log[6]
+        train_ssim = train_log[7]
+        val_loss = train_log[8]
+        val_loss_diff=train_log[9]
+        val_loss_up=train_log[10]
+        val_loss_down=train_log[11]
+        val_psnr = train_log[12]
+        val_ssim = train_log[13]
 
         is_best = val_ssim > best_ssim
         best_ssim = max(val_ssim, best_ssim)
@@ -359,6 +374,9 @@ def solvers(rank, ngpus_per_node, args):
             logger.info('epoch:{:<8d}time:{:.5f}s\tlr:{:.8f}\ttrain_loss:{:.7f}\ttrain_psnr:{:.7f}\ttrain_ssim:{:.7f}\tval_loss:{:.7f}\tval_psnr:{:.5f}\t'
                         'val_ssim:{:.5f}'.format(epoch, epoch_time, lr, train_loss , train_psnr , train_ssim, val_loss, val_psnr, val_ssim))
             writer.add_scalars('loss', {'train_loss': train_loss, 'val_loss': val_loss}, epoch)
+            writer.add_scalars('loss_diff', {'train_loss_diff': train_loss_diff, 'val_loss_diff': val_loss_diff}, epoch)
+            writer.add_scalars('loss_up', {'train_loss_up': train_loss_up, 'val_loss_up': val_loss_up}, epoch)
+            writer.add_scalars('loss_down', {'train_loss_down': train_loss_down, 'val_loss_down': val_loss_down}, epoch)
             writer.add_scalars('lossupdown', {'loss_up': ssim_up_look, 'loss_down': ssim_down_look}, epoch)
             # save checkpoint
             checkpoint = {
