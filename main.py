@@ -243,7 +243,6 @@ def forward(mode, rank, model, dataloader, criterion, optimizer, log, args ):
     log.append(loss_up)
     log.append(loss_down)
 
-
     if mode == 'train':
         curr_lr = optimizer.param_groups[0]['lr']
         log.append(curr_lr)
@@ -367,6 +366,7 @@ def solvers(rank, ngpus_per_node, args):
         val_loss_down=train_log[11]
         val_psnr = train_log[12]
         val_ssim = train_log[13]
+
 
         is_best = val_ssim > best_ssim
         best_ssim = max(val_ssim, best_ssim)

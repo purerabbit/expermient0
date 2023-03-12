@@ -1,7 +1,7 @@
-from audioop import mul
+ 
 import torch
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-from PIL import Image
+ 
 import matplotlib.pyplot as plt
 import math
 import numpy as np
@@ -9,12 +9,11 @@ import torch
 import torchvision.utils
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+ 
 from skimage.color import rgb2gray
 import os
-from functools import reduce
-import operator
-import skimage.metrics
+ 
+ 
 def get_mask(u_mask_path):
     former_path_select='/home/liuchun/Desktop/0_experiment/mask/selecting_mask/' #选择mask路径前缀
     former_path_under='/home/liuchun/Desktop/0_experiment/mask/undersampling_mask/' #欠采mask路径前缀
@@ -326,6 +325,7 @@ def compute_psnr_q(gt, pred, maxval=None):
     max_val = gt.max() if maxval is None else maxval
     PSNR = peak_signal_noise_ratio(gt, pred, data_range=max_val)  
     return PSNR
+
 def compute_ssim(pred, gt):
     # gt=minmax_normalize(gt2)
     # pred=minmax_normalize(pred2)
